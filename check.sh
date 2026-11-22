@@ -3,11 +3,11 @@
 # check.sh — проверка сервера после выполнения setup.sh
 #
 # Запуск С ЛОКАЛЬНОЙ МАШИНЫ (не на сервере):
-#   bash check.sh                        # проверит root@146.103.57.168
-#   bash check.sh dev@146.103.57.168     # другой пользователь/хост
-#   bash check.sh root@146.103.57.168 22 # нестандартный SSH-порт
+#   bash check.sh                              # root@146.103.57.168, порт 51222
+#   bash check.sh dev@146.103.57.168           # другой пользователь/хост
+#   bash check.sh root@146.103.57.168 51222    # явно указать SSH-порт
 #
-# Для полной проверки (UFW, fail2ban, сводка) нужен root —
+# Для полной проверки (UFW, fail2ban, sshd -T, сводка) нужен root —
 # при запуске от обычного пользователя эти пункты будут [SKIP].
 # Код выхода: 0 — всё в порядке, 1 — есть проблемы.
 # =============================================================
@@ -15,15 +15,18 @@
 set -uo pipefail
 
 TARGET="${1:-root@146.103.57.168}"
-PORT="${2:-22}"
+PORT="${2:-51222}"
 
 echo "Проверяю сервер через SSH: ${TARGET} (порт ${PORT})..."
 echo
 
-ssh -o ConnectTimeout=10 -p "${PORT}" "${TARGET}" 'bash -s' <<'REMOTE'
+ssh -o ConnectTimeout=10 -p "${PORT}" "${TARGET}" "bash -s -- ${PORT}" <<'REMOTE'
+SSH_PORT="${1:-51222}"
+
 PASS=0; FAIL=0; SKIP=0
 ok()   { printf '\033[1;32m[ OK ]\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
 bad()  { printf '\033[1;31m[FAIL]\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
+warn() { printf '\033[1;33m[WARN]\033[0m %s\n' "$*"; }
 skip() { printf '\033[1;33m[SKIP]\033[0m %s\n' "$*"; SKIP=$((SKIP+1)); }
 
 check() { # check "описание" команда [аргументы...]
@@ -46,12 +49,34 @@ for p in curl git tmux ufw fail2ban unattended-upgrades; do
 done
 check "автообновления безопасности включены" systemctl is-enabled unattended-upgrades
 
+echo "== SSH (защита) =="
+check "sshd слушает порт ${SSH_PORT}" bash -c "ss -tln | grep -qE ':${SSH_PORT}[[:space:]]'"
+if [ "$IS_ROOT" -eq 1 ]; then
+  check "sshd: AllowUsers настроен" bash -c 'sshd -T 2>/dev/null | grep -qi "^allowusers "'
+  check "sshd: root только по ключу" bash -c 'sshd -T 2>/dev/null | grep -qi "^permitrootlogin prohibit-password"'
+  if sshd -T 2>/dev/null | grep -qi '^passwordauthentication no'; then
+    ok "sshd: вход по паролю отключён"
+  else
+    warn "sshd: вход по паролю ВКЛЮЧЁН (нет SSH-ключей? добавьте ключ и перезапустите setup.sh)"
+  fi
+else
+  skip "эффективный конфиг sshd (нужен root)"
+fi
+
 echo "== Файрвол и fail2ban =="
 if [ "$IS_ROOT" -eq 1 ]; then
   check "UFW активен" bash -c 'ufw status | grep -q "Status: active"'
-  for rule in "22/tcp" "51820/udp" "51821/tcp"; do
-    check "UFW: открыт $rule" bash -c "ufw status | grep -q '$rule'"
+  check "UFW: открыт ${SSH_PORT}/tcp" bash -c "ufw status | grep -qE '^${SSH_PORT}/tcp[[:space:]]'"
+  for rule in "51820/udp" "51821/tcp"; do
+    check "UFW: открыт $rule" bash -c "ufw status | grep -qE '^${rule}[[:space:]]'"
   done
+  if [ "${SSH_PORT}" != "22" ]; then
+    if ufw status | grep -qE '^22/tcp[[:space:]]'; then
+      bad "UFW: старый порт 22/tcp всё ещё открыт"
+    else
+      ok "UFW: старый порт 22/tcp закрыт"
+    fi
+  fi
   check "fail2ban: jail sshd активен" fail2ban-client status sshd
 else
   skip "UFW и fail2ban jail (нужен root)"

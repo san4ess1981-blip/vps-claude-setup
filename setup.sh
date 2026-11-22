@@ -4,6 +4,7 @@
 #
 # Что делает:
 #   Часть 2: обновления, пользователь, UFW, fail2ban, автообновления
+#   Часть 3.5: защита SSH — новый порт, AllowUsers, запрет пароля (если есть ключ)
 #   Часть 3: Docker + wg-easy (WireGuard с веб-панелью)
 #   Часть 4: Node.js 22 + Claude Code + git/tmux/python
 #   Часть 6.5: SSH-ключ для GitHub
@@ -15,7 +16,7 @@ set -euo pipefail
 
 # ---------- Параметры (можно поменять) ----------
 NEW_USER="dev"            # имя рабочего пользователя
-SSH_PORT="22"             # порт SSH (если меняли — укажите свой)
+SSH_PORT="51222"          # НОВЫЙ порт SSH (нестандартный — защита от ботов)
 WG_UDP_PORT="51820"       # порт WireGuard
 WG_UI_PORT="51821"        # порт веб-панели wg-easy
 SERVER_IP="146.103.57.168"  # внешний IP сервера (Virtarix)
@@ -53,13 +54,78 @@ if [[ -f /root/.ssh/authorized_keys ]]; then
   echo "    SSH-ключ root скопирован пользователю ${NEW_USER}"
 fi
 
-echo "==> [3/7] Файрвол UFW"
-ufw allow "${SSH_PORT}/tcp"
+echo "==> [3/7] Файрвол UFW + fail2ban"
+ufw allow "${SSH_PORT}/tcp"     # новый порт SSH
+if [[ "${SSH_PORT}" != "22" ]]; then
+  ufw allow 22/tcp              # старый порт — временно, закроем после проверки
+fi
 ufw allow "${WG_UDP_PORT}/udp"
 ufw allow "${WG_UI_PORT}/tcp"   # панель wg-easy — закройте после настройки (команда в конце)
 ufw --force enable
 
+# fail2ban следит за новым портом SSH
+cat > /etc/fail2ban/jail.local <<EOF
+[sshd]
+enabled  = true
+port     = ${SSH_PORT}
+maxretry = 5
+bantime  = 1h
+EOF
 systemctl enable --now fail2ban
+systemctl restart fail2ban
+
+echo "==> [3.5/7] Защита SSH: порт ${SSH_PORT}, AllowUsers, запрет пароля"
+# Ubuntu 24.04 использует socket-активацию SSH: параметр Port в sshd_config
+# при ней игнорируется — отключаем сокет, включаем классический сервис
+if systemctl is-enabled ssh.socket >/dev/null 2>&1; then
+  systemctl disable --now ssh.socket
+fi
+systemctl enable ssh.service >/dev/null 2>&1 || systemctl enable ssh >/dev/null 2>&1 || true
+
+# Запрещаем пароль ТОЛЬКО если есть хоть один SSH-ключ — иначе потеряем доступ
+HAVE_KEYS=0
+[[ -s /root/.ssh/authorized_keys ]] && HAVE_KEYS=1
+[[ -s "/home/${NEW_USER}/.ssh/authorized_keys" ]] && HAVE_KEYS=1
+
+{
+  echo "Port ${SSH_PORT}"
+  echo "AllowUsers ${NEW_USER} root"
+  echo "PermitRootLogin prohibit-password"
+  if [[ "${HAVE_KEYS}" -eq 1 ]]; then
+    echo "PubkeyAuthentication yes"
+    echo "PasswordAuthentication no"
+  fi
+} > /etc/ssh/sshd_config.d/99-vps-hardening.conf
+
+if [[ "${HAVE_KEYS}" -eq 1 ]]; then
+  PW_AUTH="ОТКЛЮЧЁН (только по ключу)"
+else
+  PW_AUTH="ВКЛЮЧЁН — SSH-ключи не найдены! Добавьте ключ в /home/${NEW_USER}/.ssh/authorized_keys и перезапустите setup.sh"
+  echo "    ВНИМАНИЕ: SSH-ключи не найдены — вход по паролю ОСТАВЛЕН, иначе доступ был бы потерян."
+fi
+
+# Проверка конфига и перезапуск; при неудаче — откат
+if sshd -t; then
+  systemctl restart ssh
+else
+  echo "    ОШИБКА: конфиг sshd невалиден — откатываю" >&2
+  rm -f /etc/ssh/sshd_config.d/99-vps-hardening.conf
+  systemctl restart ssh || true
+  exit 1
+fi
+
+if ss -tln | grep -qE ":${SSH_PORT}[[:space:]]"; then
+  echo "    sshd слушает порт ${SSH_PORT}"
+  if [[ "${SSH_PORT}" != "22" ]]; then
+    ufw delete allow 22/tcp >/dev/null 2>&1 || true
+    echo "    старый порт 22/tcp закрыт в UFW"
+  fi
+else
+  echo "    ОШИБКА: sshd не поднялся на порту ${SSH_PORT} — откатываю конфиг" >&2
+  rm -f /etc/ssh/sshd_config.d/99-vps-hardening.conf
+  systemctl restart ssh || true
+  exit 1
+fi
 
 echo "==> [4/7] Установка Docker"
 if command -v docker &>/dev/null; then
@@ -140,22 +206,29 @@ SUMMARY="/root/setup-summary.txt"
     echo "Пароль пользователя:   ${USER_PASS}   (смените: passwd)"
   fi
   echo
+  echo "--- SSH (защищён) ---"
+  echo "НОВЫЙ порт SSH:        ${SSH_PORT}   (порт 22 закрыт!)"
+  echo "Подключение:           ssh -p ${SSH_PORT} ${NEW_USER}@${SERVER_IP}"
+  echo "Вход по паролю:        ${PW_AUTH}"
+  echo "Разрешённые юзеры:     ${NEW_USER}, root (root — только по ключу)"
+  echo
   echo "--- VPN (WireGuard / wg-easy) ---"
   echo "Панель управления:     http://${SERVER_IP}:${WG_UI_PORT}"
   echo "Пароль панели:         ${WG_UI_PASS}"
   echo "Порт WireGuard (UDP):  ${WG_UDP_PORT}"
   echo
   echo "ДАЛЬШЕ ПО ШАГАМ:"
-  echo "1) Откройте панель, создайте клиента, скачайте конфиг / QR."
-  echo "2) Импортируйте конфиг в приложение WireGuard на домашнем ПК."
-  echo "3) Проверьте whoer.net — должен быть IP ${SERVER_IP}."
-  echo "4) С ВКЛЮЧЁННЫМ VPN зарегистрируйтесь/войдите на claude.ai."
-  echo "5) Закройте панель снаружи:"
+  echo "1) НЕ закрывая текущую сессию, проверьте вход: ssh -p ${SSH_PORT} ${NEW_USER}@${SERVER_IP}"
+  echo "2) Откройте панель wg-easy, создайте клиента, скачайте конфиг / QR."
+  echo "3) Импортируйте конфиг в приложение WireGuard на домашнем ПК."
+  echo "4) Проверьте whoer.net — должен быть IP ${SERVER_IP}."
+  echo "5) С ВКЛЮЧЁННЫМ VPN зарегистрируйтесь/войдите на claude.ai."
+  echo "6) Закройте панель снаружи:"
   echo "     sudo ufw deny ${WG_UI_PORT}/tcp"
   echo "   (открывать обратно: sudo ufw allow ${WG_UI_PORT}/tcp)"
   echo
   echo "--- Claude Code ---"
-  echo "Вход:        ssh ${NEW_USER}@${SERVER_IP}"
+  echo "Вход:        ssh -p ${SSH_PORT} ${NEW_USER}@${SERVER_IP}"
   echo "Запуск:      tmux new -s work   →   claude"
   echo "Авторизация: ссылку из терминала открыть в браузере С VPN."
   echo
@@ -164,7 +237,7 @@ SUMMARY="/root/setup-summary.txt"
   echo "  https://github.com/settings/ssh/new  (открыть с VPN или напрямую)"
   echo "Публичный ключ (скопируйте целиком в поле Key):"
   echo "${GH_PUBKEY}"
-  echo "Проверка после добавления:  ssh ${NEW_USER}@${SERVER_IP}  →  ssh -T git@github.com"
+  echo "Проверка после добавления:  ssh -p ${SSH_PORT} ${NEW_USER}@${SERVER_IP}  →  ssh -T git@github.com"
   echo "Должно ответить: Hi <ваш_логин>! You've successfully authenticated."
   echo
   echo "--- Финал ---"
@@ -174,3 +247,5 @@ SUMMARY="/root/setup-summary.txt"
 
 echo
 echo "Готово. Сводка также сохранена в ${SUMMARY}"
+echo "ВАЖНО: SSH теперь на порту ${SSH_PORT}. Не закрывая эту сессию,"
+echo "проверьте вход:  ssh -p ${SSH_PORT} ${NEW_USER}@${SERVER_IP}"
