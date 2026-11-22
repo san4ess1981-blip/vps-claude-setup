@@ -136,7 +136,9 @@ SUMMARY="/root/setup-summary.txt"
   echo "======================================================"
   echo "IP сервера:            ${SERVER_IP}"
   echo "Рабочий пользователь:  ${NEW_USER}"
-  [[ -n "${USER_PASS:-}" ]] && echo "Пароль пользователя:   ${USER_PASS}   (смените: passwd)"
+  if [[ -n "${USER_PASS:-}" ]]; then
+    echo "Пароль пользователя:   ${USER_PASS}   (смените: passwd)"
+  fi
   echo
   echo "--- VPN (WireGuard / wg-easy) ---"
   echo "Панель управления:     http://${SERVER_IP}:${WG_UI_PORT}"
