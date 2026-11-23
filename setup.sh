@@ -40,7 +40,7 @@ echo "==> [2/7] Создание пользователя '${NEW_USER}'"
 if id "${NEW_USER}" &>/dev/null; then
   echo "    пользователь уже существует — пропускаю"
 else
-  USER_PASS="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)"
+  USER_PASS="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20 || true)"
   useradd -m -s /bin/bash -G sudo "${NEW_USER}"
   echo "${NEW_USER}:${USER_PASS}" | chpasswd
 fi
@@ -84,8 +84,8 @@ systemctl enable ssh.service >/dev/null 2>&1 || systemctl enable ssh >/dev/null 
 
 # Запрещаем пароль ТОЛЬКО если есть хоть один SSH-ключ — иначе потеряем доступ
 HAVE_KEYS=0
-[[ -s /root/.ssh/authorized_keys ]] && HAVE_KEYS=1
-[[ -s "/home/${NEW_USER}/.ssh/authorized_keys" ]] && HAVE_KEYS=1
+[[ -s /root/.ssh/authorized_keys ]] && HAVE_KEYS=1 || true
+[[ -s "/home/${NEW_USER}/.ssh/authorized_keys" ]] && HAVE_KEYS=1 || true
 
 {
   echo "Port ${SSH_PORT}"
@@ -114,7 +114,8 @@ else
   exit 1
 fi
 
-if ss -tln | grep -qE ":${SSH_PORT}[[:space:]]"; then
+SS_LISTEN="$(ss -tln)"
+if grep -qE ":${SSH_PORT}[[:space:]]" <<<"${SS_LISTEN}"; then
   echo "    sshd слушает порт ${SSH_PORT}"
   if [[ "${SSH_PORT}" != "22" ]]; then
     ufw delete allow 22/tcp >/dev/null 2>&1 || true
@@ -145,14 +146,15 @@ if [[ -n "${DETECTED_IP}" && "${DETECTED_IP}" != "${SERVER_IP}" ]]; then
 fi
 
 # Случайный пароль веб-панели и его bcrypt-хэш
-WG_UI_PASS="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)"
+WG_UI_PASS="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20 || true)"
 RAW_HASH="$(docker run --rm -i ghcr.io/wg-easy/wg-easy:14 wgpw "${WG_UI_PASS}" | tr -d '\r\n')"
 HASH="${RAW_HASH#PASSWORD_HASH=\'}"
 HASH="${HASH%\'}"
 ESCAPED_HASH="${HASH//\$/\$\$}"   # экранирование $ для docker -e
 
 mkdir -p /opt/wg-easy
-if docker ps -a --format '{{.Names}}' | grep -q '^wg-easy$'; then
+DOCKER_PS="$(docker ps -a --format '{{.Names}}')"
+if grep -q '^wg-easy$' <<<"${DOCKER_PS}"; then
   echo "    контейнер wg-easy уже существует — пересоздаю"
   docker rm -f wg-easy >/dev/null
 fi
