@@ -20,6 +20,8 @@ SSH_PORT="51222"          # НОВЫЙ порт SSH (нестандартный 
 WG_UDP_PORT="51820"       # порт WireGuard
 WG_UI_PORT="51821"        # порт веб-панели wg-easy
 SERVER_IP="146.103.57.168"  # внешний IP сервера (Virtarix)
+# Алфавит паролей без похожих символов (нет 0/O, 1/l/I) — проще переписывать
+PASS_ALPHABET='ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
 # ------------------------------------------------
 
 if [[ $EUID -ne 0 ]]; then
@@ -40,7 +42,7 @@ echo "==> [2/7] Создание пользователя '${NEW_USER}'"
 if id "${NEW_USER}" &>/dev/null; then
   echo "    пользователь уже существует — пропускаю"
 else
-  USER_PASS="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20 || true)"
+  USER_PASS="$(tr -dc "${PASS_ALPHABET}" </dev/urandom | head -c 20 || true)"
   useradd -m -s /bin/bash -G sudo "${NEW_USER}"
   echo "${NEW_USER}:${USER_PASS}" | chpasswd
 fi
@@ -146,11 +148,12 @@ if [[ -n "${DETECTED_IP}" && "${DETECTED_IP}" != "${SERVER_IP}" ]]; then
 fi
 
 # Случайный пароль веб-панели и его bcrypt-хэш
-WG_UI_PASS="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20 || true)"
+WG_UI_PASS="$(tr -dc "${PASS_ALPHABET}" </dev/urandom | head -c 20 || true)"
 RAW_HASH="$(docker run --rm -i ghcr.io/wg-easy/wg-easy:14 wgpw "${WG_UI_PASS}" | tr -d '\r\n')"
 HASH="${RAW_HASH#PASSWORD_HASH=\'}"
 HASH="${HASH%\'}"
-ESCAPED_HASH="${HASH//\$/\$\$}"   # экранирование $ для docker -e
+# ВАЖНО: для docker run -e символы $ экранировать НЕ нужно!
+# ($$ — синтаксис docker-compose; с ним хэш битый и пароль никогда не подойдёт)
 
 mkdir -p /opt/wg-easy
 DOCKER_PS="$(docker ps -a --format '{{.Names}}')"
@@ -162,7 +165,7 @@ fi
 docker run -d \
   --name=wg-easy \
   -e WG_HOST="${SERVER_IP}" \
-  -e PASSWORD_HASH="${ESCAPED_HASH}" \
+  -e PASSWORD_HASH="${HASH}" \
   -p "${WG_UDP_PORT}:51820/udp" \
   -p "${WG_UI_PORT}:51821/tcp" \
   -v /opt/wg-easy:/etc/wireguard \
