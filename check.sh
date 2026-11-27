@@ -53,7 +53,7 @@ echo "== SSH (защита) =="
 check "sshd слушает порт ${SSH_PORT}" bash -c "ss -tln | grep -qE ':${SSH_PORT}[[:space:]]'"
 if [ "$IS_ROOT" -eq 1 ]; then
   check "sshd: AllowUsers настроен" bash -c 'sshd -T 2>/dev/null | grep -qi "^allowusers "'
-  check "sshd: root только по ключу" bash -c 'sshd -T 2>/dev/null | grep -qi "^permitrootlogin prohibit-password"'
+  check "sshd: root только по ключу" bash -c 'sshd -T 2>/dev/null | grep -qiE "^permitrootlogin (prohibit-password|without-password)"'
   if sshd -T 2>/dev/null | grep -qi '^passwordauthentication no'; then
     ok "sshd: вход по паролю отключён"
   else
