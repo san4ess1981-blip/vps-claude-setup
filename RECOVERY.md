@@ -267,7 +267,7 @@ ssh -p 51222 dev@146.103.57.168 "sudo shred -u /root/setup-summary.txt"
 выполни в консоли Virtarix три команды:
 
 ```bash
-rm -f /etc/ssh/sshd_config.d/99-vps-hardening.conf
+rm -f /etc/ssh/sshd_config.d/00-vps-hardening.conf /etc/ssh/sshd_config.d/99-vps-hardening.conf
 ```
 
 ```bash
