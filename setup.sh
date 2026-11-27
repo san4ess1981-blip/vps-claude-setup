@@ -89,6 +89,8 @@ HAVE_KEYS=0
 [[ -s /root/.ssh/authorized_keys ]] && HAVE_KEYS=1 || true
 [[ -s "/home/${NEW_USER}/.ssh/authorized_keys" ]] && HAVE_KEYS=1 || true
 
+# Имя 00-* — sshd читает файлы по алфавиту, и первое значение побеждает;
+# облачный 50-cloud-init.conf иначе перебивает запрет пароля
 {
   echo "Port ${SSH_PORT}"
   echo "AllowUsers ${NEW_USER} root"
@@ -97,7 +99,7 @@ HAVE_KEYS=0
     echo "PubkeyAuthentication yes"
     echo "PasswordAuthentication no"
   fi
-} > /etc/ssh/sshd_config.d/99-vps-hardening.conf
+} > /etc/ssh/sshd_config.d/00-vps-hardening.conf
 
 if [[ "${HAVE_KEYS}" -eq 1 ]]; then
   PW_AUTH="ОТКЛЮЧЁН (только по ключу)"
@@ -111,7 +113,7 @@ if sshd -t; then
   systemctl restart ssh
 else
   echo "    ОШИБКА: конфиг sshd невалиден — откатываю" >&2
-  rm -f /etc/ssh/sshd_config.d/99-vps-hardening.conf
+  rm -f /etc/ssh/sshd_config.d/00-vps-hardening.conf
   systemctl restart ssh || true
   exit 1
 fi
@@ -125,7 +127,7 @@ if grep -qE ":${SSH_PORT}[[:space:]]" <<<"${SS_LISTEN}"; then
   fi
 else
   echo "    ОШИБКА: sshd не поднялся на порту ${SSH_PORT} — откатываю конфиг" >&2
-  rm -f /etc/ssh/sshd_config.d/99-vps-hardening.conf
+  rm -f /etc/ssh/sshd_config.d/00-vps-hardening.conf
   systemctl restart ssh || true
   exit 1
 fi
