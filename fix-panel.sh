@@ -19,7 +19,8 @@ PASS_ALPHABET='ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
 NEWPASS="$(tr -dc "${PASS_ALPHABET}" </dev/urandom | head -c 20 || true)"
 
 echo "==> Генерирую новый хэш пароля..."
-RAW="$(docker run --rm -i ghcr.io/wg-easy/wg-easy:14 wgpw "${NEWPASS}" | tr -d '\r\n')"
+# ВАЖНО: </dev/null — иначе при запуске через curl|bash docker съест остаток скрипта
+RAW="$(docker run --rm ghcr.io/wg-easy/wg-easy:14 wgpw "${NEWPASS}" </dev/null | tr -d '\r\n')"
 HASH="${RAW#PASSWORD_HASH=\'}"
 HASH="${HASH%\'}"
 
