@@ -149,7 +149,8 @@ fi
 
 # Случайный пароль веб-панели и его bcrypt-хэш
 WG_UI_PASS="$(tr -dc "${PASS_ALPHABET}" </dev/urandom | head -c 20 || true)"
-RAW_HASH="$(docker run --rm -i ghcr.io/wg-easy/wg-easy:14 wgpw "${WG_UI_PASS}" | tr -d '\r\n')"
+# ВАЖНО: </dev/null — иначе при запуске через curl|bash docker съест остаток скрипта
+RAW_HASH="$(docker run --rm ghcr.io/wg-easy/wg-easy:14 wgpw "${WG_UI_PASS}" </dev/null | tr -d '\r\n')"
 HASH="${RAW_HASH#PASSWORD_HASH=\'}"
 HASH="${HASH%\'}"
 # ВАЖНО: для docker run -e символы $ экранировать НЕ нужно!
