@@ -9,7 +9,8 @@
 # Что делает:
 #   1. Ставит xray (ядро VLESS/Reality) официальным скриптом.
 #   2. Генерирует UUID, ключи x25519, short id.
-#   3. Пишет /usr/local/etc/xray/config.json (TCP, SNI www.microsoft.com).
+#   3. Пишет /usr/local/etc/xray/config.json (TCP, SNI teamviewer.com,
+#      fingerprint firefox — проверенная маскировка).
 #   4. Открывает порт в UFW, перезапускает xray.
 #   5. Печатает vless:// ссылку, QR-код и кладёт всё в /root/reality-info.txt
 #      (QR-картинка: /root/reality-qr.png).
@@ -19,7 +20,7 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 PORT="${1:-8443}"
-SNI="www.microsoft.com"
+SNI="teamviewer.com"
 NAME="Virtarix-Reality"
 INFO=/root/reality-info.txt
 
@@ -89,7 +90,7 @@ ss -tln | grep -qE ":${PORT}[[:space:]]" || { echo "ОШИБКА: xray не сл
 echo "xray запущен и слушает ${PORT}/tcp."
 
 echo "=== [5/5] Генерирую ссылку и QR-код ==="
-LINK="vless://${UUID}@146.103.57.168:${PORT}?security=reality&encryption=none&pbk=${PUB}&fp=chrome&sni=${SNI}&sid=${SID}&flow=xtls-rprx-vision&type=tcp#${NAME}"
+LINK="vless://${UUID}@146.103.57.168:${PORT}?security=reality&encryption=none&pbk=${PUB}&fp=firefox&sni=${SNI}&sid=${SID}&flow=xtls-rprx-vision&type=tcp#${NAME}"
 
 command -v qrencode >/dev/null 2>&1 || apt-get install -y -q qrencode >/dev/null
 qrencode -o /root/reality-qr.png -s 8 -m 2 "$LINK"
@@ -109,7 +110,7 @@ ${LINK}
   SNI           : ${SNI}
   Public key    : ${PUB}
   Short ID      : ${SID}
-  Fingerprint   : chrome
+  Fingerprint   : firefox
   Транспорт     : tcp
 
 QR-код картинкой: /root/reality-qr.png
