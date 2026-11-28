@@ -3,13 +3,14 @@
 # reality.sh — свой VPN на сервере: VLESS + Reality (xray)
 #
 # Запуск от root на сервере:
-#   bash reality.sh
+#   bash reality.sh          # порт 8443 (по умолчанию)
+#   bash reality.sh 443      # или любой другой порт
 #
 # Что делает:
 #   1. Ставит xray (ядро VLESS/Reality) официальным скриптом.
 #   2. Генерирует UUID, ключи x25519, short id.
-#   3. Пишет /usr/local/etc/xray/config.json (TCP 443, SNI www.microsoft.com).
-#   4. Открывает 443/tcp в UFW, перезапускает xray.
+#   3. Пишет /usr/local/etc/xray/config.json (TCP, SNI www.microsoft.com).
+#   4. Открывает порт в UFW, перезапускает xray.
 #   5. Печатает vless:// ссылку, QR-код и кладёт всё в /root/reality-info.txt
 #      (QR-картинка: /root/reality-qr.png).
 # =============================================================
@@ -17,7 +18,7 @@
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
-PORT=443
+PORT="${1:-8443}"
 SNI="www.microsoft.com"
 NAME="Virtarix-Reality"
 INFO=/root/reality-info.txt
